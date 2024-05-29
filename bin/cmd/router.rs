@@ -144,10 +144,15 @@ pub(crate) fn build_router(
             path: module_path,
         } = ContractInfo::new(module_name);
 
-        let cached_artifact = module_path
-            .and_then(|path| cached_artifacts.find(path, module_name.clone()))
-            .or(cached_artifacts.find_first(module_name.clone()))
-            .ok_or_else(|| eyre::eyre!("No cached artifact found for contract `{module_name}`"))?;
+        let cached_artifact = match module_path {
+            Some(path) => project
+                .paths
+                .resolve_import(project.root(), Path::new(&path))
+                .ok()
+                .and_then(|path| cached_artifacts.find(path, module_name.clone())),
+            None => cached_artifacts.find_first(module_name.clone()),
+        }
+        .ok_or_else(|| eyre::eyre!("No cached artifact found for contract `{module_name}`"))?;
 
         let bytecode = cached_artifact
             .bytecode
