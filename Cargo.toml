@@ -1,0 +1,30 @@
+[package]
+name = "cannon-rs"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "cannon-rs"
+path = "bin/main.rs"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+alloy-primitives = { version = "0.7.1" }
+alloy-json-abi = { version = "0.7.1" }
+clap = { version = "4", features = ["derive", "env", "unicode", "wrap_help"] }
+clap_complete = { version =  "4" }
+clap_complete_fig = { version = "4" }
+eyre = { version = "0.6" }
+foundry-config = { git = "https://github.com/foundry-rs/foundry" }
+foundry-common = { git = "https://github.com/foundry-rs/foundry" }
+foundry-cli = { git = "https://github.com/foundry-rs/foundry" }
+foundry-compilers = { version =  "=0.5.0" }
+hex = { package = "const-hex", version = "1.6", features = ["hex"] }
+itertools = { version = "0.13" }
+tokio = { version = "1" }
+tracing = { version = "0.1" }
+yansi = { version = "1.0", features = ["detect-tty", "detect-env"] }
+
+[build-dependencies]
+vergen = { version = "8", features = ["build", "git", "gitcl"] }
