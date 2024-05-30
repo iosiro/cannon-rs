@@ -207,12 +207,6 @@ pub(crate) fn build_router(
         }
     }
 
-    for (_, function) in functions.iter() {
-        combined_abi
-            .functions
-            .insert(function.name.clone(), vec![function.clone()]);
-    }
-
     let interface = combined_abi.to_sol(format!("I{}", router_name).as_str(), None);
 
     let router_tree = build_binary_data(selectors.clone());
