@@ -1,39 +1,35 @@
-use alloy_primitives::{Address, Selector, B256};
-use clap::{Parser, Subcommand};
+use alloy_json_abi::{Function, JsonAbi};
+use alloy_primitives::Address;
+use alloy_primitives::{hex::ToHexExt, Selector, B256};
+use clap::Parser;
 use eyre::Result;
-use foundry_cli::opts::{CompilerArgs, CoreBuildArgs, ProjectPathsArgs};
-use foundry_common::{
-    compile::{ProjectCompiler, SkipBuildFilter, SkipBuildFilters},
-    fs,
+use foundry_cli::{opts::CoreBuildArgs, utils::LoadConfig};
+use foundry_common::fs;
+use foundry_compilers::{artifacts::solc::ConfigurableContractArtifact, info::ContractInfo};
+use foundry_config::{
+    figment::{
+        value::{Dict, Map},
+        Metadata, Profile, Provider,
+    },
+    Config,
 };
-use foundry_compilers::artifacts::output_selection::ContractOutputSelection;
-use std::collections::BTreeMap;
-use std::path::Path;
+use itertools::Itertools;
+use serde::Serialize;
+use std::{
+    collections::{BTreeMap, HashMap},
+    path::{Path, PathBuf},
+};
 use yansi::Paint;
 
-use alloy_json_abi::{Function, JsonAbi};
-use foundry_compilers::{artifacts::CompactContractBytecode, info::ContractInfo, Project};
-use hex::ToHexExt;
-use itertools::Itertools;
+// Loads project's figment and merges the build cli arguments into it
+foundry_config::merge_impl_figment_convert!(GenerateRouterArgs, opts);
 
-/// CLI arguments for `cannon-rs router`.
-#[derive(Debug, Parser)]
-pub struct RouterArgs {
-    #[command(subcommand)]
-    pub sub: RouterSubcommands,
-}
-
-#[derive(Debug, Subcommand)]
-pub enum RouterSubcommands {
-    /// Scaffolds router file for given contracts
-    Generate(Box<GenerateRouterArgs>),
-}
-
-#[derive(Debug, Parser)]
+/// CLI arguments for `forge generate router`.
+#[derive(Clone, Debug, Default, Serialize, Parser)]
 pub struct GenerateRouterArgs {
     /// Router name for router generation.
     #[clap(long, value_name = "ROUTER_NAME")]
-    pub name: String,
+    name: String,
 
     #[clap(long, default_value = "0x4e59b44847b379578588920ca78fbf26c0b4956c")]
     deployer: Address,
@@ -45,32 +41,61 @@ pub struct GenerateRouterArgs {
     salt: B256,
 
     /// Contract names for router generation.
-    pub module_names: Vec<String>,
+    module_names: Vec<String>,
 
-    #[clap(flatten)]
-    pub project_paths: ProjectPathsArgs,
+    #[command(flatten)]
+    opts: CoreBuildArgs,
 }
 
 impl GenerateRouterArgs {
     pub fn run(self) -> Result<()> {
-        let GenerateRouterArgs {
-            deployer,
-            name: router_name,
-            module_names,
-            salt,
-            project_paths,
-        } = self;
+        // Merge all configs.
+        let config = self.try_load_config_emit_warnings()?;
 
-        let build_args = CoreBuildArgs {
-            project_paths: project_paths.clone(),
-            compiler: CompilerArgs {
-                extra_output: vec![ContractOutputSelection::Abi],
-                ..Default::default()
-            },
-            ..Default::default()
-        };
+        let project = config.create_project(true, true)?;
 
-        let project = build_args.project()?;
+        let output = project.compile()?;
+
+        if output.has_compiler_errors() {
+            println!("{output}");
+            eyre::bail!("Compilation failed");
+        }
+
+        let mut targets: HashMap<String, Option<(ContractInfo, ConfigurableContractArtifact)>> =
+            HashMap::new();
+        for target in &self.module_names {
+            targets.insert(target.clone(), None);
+        }
+
+        for (path, name, info) in output.into_artifacts_with_files() {
+            for (module_name, module_info) in &mut targets {
+                let target = ContractInfo::new(module_name.as_str());
+                if let Some(target_path) = &target.path {
+                    if PathBuf::from(target_path) == path && target.name == name {
+                        *module_info = Some((target, info.clone()));
+                    } else if let Ok(resolved_path) = project
+                        .paths
+                        .resolve_import(project.root(), Path::new(&target_path))
+                    {
+                        if resolved_path == path && target.name == name {
+                            *module_info = Some((target, info.clone()));
+                        }
+                    }
+                }
+            }
+        }
+
+        // Make sure all targets were found
+        for (module_name, module_info) in &targets {
+            if module_info.is_none() {
+                eyre::bail!("Module `{}` not found", module_name);
+            }
+        }
+
+        let sources = targets
+            .into_iter()
+            .filter_map(|(_, info)| info.map(|(info, artifact)| (info.name, artifact)))
+            .collect::<Vec<(String, ConfigurableContractArtifact)>>();
 
         let output_dir = project
             .sources_path()
@@ -78,25 +103,12 @@ impl GenerateRouterArgs {
             .to_path_buf()
             .join("generated/routers");
 
-        let filter = SkipBuildFilters::new(
-            [SkipBuildFilter::Custom(format!(
-                "{}/**.sol",
-                output_dir.to_str().unwrap()
-            ))],
-            project.root().clone(),
-        )?;
-
-        ProjectCompiler::new()
-            .filter(Box::new(filter))
-            .quiet(true)
-            .compile(&project)?;
-
-        let output = build_router(&project, router_name.clone(), module_names, deployer, salt)?;
+        let output = build_router(self.name.clone(), sources, self.deployer, self.salt)?;
 
         let output_dir = Path::new(&output_dir);
         fs::create_dir_all(output_dir)?;
 
-        let router_file_path = output_dir.join(format!("{}.g.sol", router_name));
+        let router_file_path = output_dir.join(format!("{}.g.sol", self.name));
         fs::write(&router_file_path, output)?;
         println!(
             "{} router file: {}",
@@ -105,6 +117,16 @@ impl GenerateRouterArgs {
         );
 
         Ok(())
+    }
+}
+
+impl Provider for GenerateRouterArgs {
+    fn metadata(&self) -> Metadata {
+        Metadata::named("Generator Args Provider")
+    }
+
+    fn data(&self) -> Result<Map<Profile, Dict>, foundry_config::figment::Error> {
+        Ok(Map::from([(Config::selected_profile(), Dict::default())]))
     }
 }
 
@@ -122,39 +144,19 @@ struct BinaryData {
     children: Vec<BinaryData>,
 }
 
-pub(crate) fn build_router(
-    project: &Project,
+fn build_router(
     router_name: String,
-    module_names: Vec<String>,
+    sources: Vec<(String, ConfigurableContractArtifact)>,
     deployer: Address,
     salt: B256,
 ) -> Result<String> {
-    let router_name = format_identifier(&router_name, true);
-
-    let cache = project.read_cache_file()?;
-    let cached_artifacts = cache.read_artifacts::<CompactContractBytecode>()?;
-
     let mut combined_abi = JsonAbi::new();
     let mut functions = BTreeMap::<Selector, Function>::new();
     let mut selectors = Vec::new();
 
-    for module_name in module_names.iter() {
-        let ContractInfo {
-            name: module_name,
-            path: module_path,
-        } = ContractInfo::new(module_name);
-
-        let cached_artifact = match module_path {
-            Some(path) => project
-                .paths
-                .resolve_import(project.root(), Path::new(&path))
-                .ok()
-                .and_then(|path| cached_artifacts.find(path, module_name.clone())),
-            None => cached_artifacts.find_first(module_name.clone()),
-        }
-        .ok_or_else(|| eyre::eyre!("No cached artifact found for contract `{module_name}`"))?;
-
-        let bytecode = cached_artifact
+    for module in sources.iter() {
+        let (module_name, artifact) = module;
+        let bytecode = artifact
             .bytecode
             .as_ref()
             .and_then(|b| b.bytes())
@@ -163,7 +165,7 @@ pub(crate) fn build_router(
         // calculate create2 address
         let address = Address::create2_from_code(&deployer, salt, bytecode);
 
-        let abi = cached_artifact
+        let abi = artifact
             .abi
             .as_ref()
             .ok_or_else(|| eyre::eyre!("No ABI found for contract `{module_name}`"))?;
@@ -171,7 +173,10 @@ pub(crate) fn build_router(
         for function_set in abi.functions.iter() {
             for function in function_set.1.iter() {
                 if functions.contains_key(&function.selector()) {
-                    return Err(eyre::eyre!("Duplicate selector found"));
+                    return Err(eyre::eyre!(format!(
+                        "Duplicate selector found {}",
+                        function.signature()
+                    )));
                 }
 
                 functions.insert(function.selector(), function.clone());
@@ -207,7 +212,7 @@ pub(crate) fn build_router(
         }
     }
 
-    let interface = combined_abi.to_sol(format!("I{}", router_name).as_str(), None);
+    let interface = combined_abi.to_sol(format!("I{router_name}").as_str(), None);
 
     let router_tree = build_binary_data(selectors.clone());
     let module_lookup = render_modules(selectors.clone());
@@ -216,7 +221,7 @@ pub(crate) fn build_router(
     let selectors = render_selectors(router_tree);
 
     // Create the router file content.
-    let router_content = include_str!("../../assets/templates/RouterTemplate.sol");
+    let router_content = include_str!("../../../assets/templates/RouterTemplate.sol");
     let router_content = router_content
         .replace("{selectors}", &selectors)
         .replace("{interface}", &interface)
@@ -231,7 +236,7 @@ pub(crate) fn build_router(
 fn build_binary_data(selectors: Vec<RouterTemplateInputs>) -> BinaryData {
     const MAX_SELECTORS_PER_SWITCH_STATEMENT: usize = 9;
 
-    let mut selectors = selectors.clone();
+    let mut selectors = selectors;
     selectors.sort_by(|a, b| a.selector.cmp(&b.selector));
 
     fn binary_split(node: &mut BinaryData) {
@@ -296,7 +301,7 @@ fn render_selectors(mut binary_data: BinaryData) -> String {
             render_node(&mut child_a, indent + 1, selectors_str);
             selectors_str.push(format!("{}}}", repeat_string("    ", indent)));
 
-            render_node(&mut child_b, indent + 2, selectors_str);
+            render_node(&mut child_b, indent, selectors_str);
         } else {
             selectors_str.push(format!("{}switch sig", repeat_string("    ", indent)));
             for s in &node.selectors {
@@ -322,7 +327,6 @@ fn render_modules(modules: Vec<RouterTemplateInputs>) -> String {
     let mut modules_str: Vec<String> = Vec::new();
 
     let modules = modules
-        .clone()
         .into_iter()
         .unique_by(|m| m.contract_name.clone())
         .collect::<Vec<RouterTemplateInputs>>();
@@ -334,7 +338,7 @@ fn render_modules(modules: Vec<RouterTemplateInputs>) -> String {
     } in modules
     {
         modules_str.push(format!(
-            "address constant {} = {};",
+            "    address constant {} = {};",
             to_constant_case(&contract_name),
             address.to_checksum(None)
         ));
@@ -362,24 +366,4 @@ fn to_constant_case(name: &str) -> String {
     }
 
     result.to_uppercase()
-}
-
-/// Utility function to convert an identifier to pascal or camel case.
-fn format_identifier(input: &str, is_pascal_case: bool) -> String {
-    let mut result = String::new();
-    let mut capitalize_next = is_pascal_case;
-
-    for word in input.split_whitespace() {
-        if !word.is_empty() {
-            let (first, rest) = word.split_at(1);
-            let formatted_word = if capitalize_next {
-                format!("{}{}", first.to_uppercase(), rest)
-            } else {
-                format!("{}{}", first.to_lowercase(), rest)
-            };
-            capitalize_next = true;
-            result.push_str(&formatted_word);
-        }
-    }
-    result
 }

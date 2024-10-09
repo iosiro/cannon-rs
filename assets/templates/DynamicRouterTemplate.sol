@@ -6,12 +6,24 @@ pragma solidity ^0.8.13;
 contract {router_name} {
 {modules}
 
+    struct Modules {
+        {struct}
+    }
+
+    constructor(Modules memory $) {
+{immutables}
+    }
+
     error UnknownSelector(bytes4 sel);
+
+    function findImplementationAddress(bytes32 implementation) internal view returns (address result) {
+{resolver}
+    }
 
     fallback() external payable {
         // Lookup table: Function selector => implementation contract
         bytes4 sig4 = msg.sig;
-        address implementation;
+        bytes32 implementation;
 
         assembly {
             let sig32 := shr(224, sig4)
@@ -23,7 +35,9 @@ contract {router_name} {
             implementation := findImplementation(sig32)
         }
 
-        if (implementation == address(0)) {
+        address implementation_address = findImplementationAddress(implementation);
+
+        if (implementation_address == address(0)) {
             revert UnknownSelector(sig4);
         }
 
@@ -31,7 +45,7 @@ contract {router_name} {
         assembly {
             calldatacopy(0, 0, calldatasize())
 
-            let result := delegatecall(gas(), implementation, 0, calldatasize(), 0, 0)
+            let result := delegatecall(gas(), implementation_address, 0, calldatasize(), 0, 0)
             returndatacopy(0, 0, returndatasize())
 
             switch result
