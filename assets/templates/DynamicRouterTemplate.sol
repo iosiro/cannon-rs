@@ -7,7 +7,7 @@ contract {router_name} {
 {modules}
 
     struct Modules {
-        {struct}
+{struct}
     }
 
     constructor(Modules memory $) {

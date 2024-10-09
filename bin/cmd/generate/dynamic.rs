@@ -3,8 +3,10 @@ use alloy_primitives::{hex::ToHexExt, keccak256, Selector};
 use clap::Parser;
 use eyre::Result;
 use foundry_cli::{opts::CoreBuildArgs, utils::LoadConfig};
-use foundry_common::fs;
-use foundry_compilers::{artifacts::solc::ConfigurableContractArtifact, info::ContractInfo};
+use foundry_compilers::{
+    artifacts::solc::ConfigurableContractArtifact,
+    info::ContractInfo,
+};
 use foundry_config::{
     figment::{
         value::{Dict, Map},
@@ -16,6 +18,7 @@ use itertools::Itertools;
 use serde::Serialize;
 use std::{
     collections::{BTreeMap, HashMap},
+    fs,
     path::{Path, PathBuf},
 };
 use yansi::Paint;
@@ -41,7 +44,6 @@ impl GenerateDynamicRouterArgs {
     pub fn run(self) -> Result<()> {
         // Merge all configs.
         let config = self.try_load_config_emit_warnings()?;
-
         let project = config.create_project(true, true)?;
 
         let output = project.compile()?;
@@ -62,8 +64,7 @@ impl GenerateDynamicRouterArgs {
                 let target = ContractInfo::new(module_name.as_str());
                 if let Some(target_path) = &target.path {
                     if PathBuf::from(target_path) == path && target.name == name {
-                        *module_info =
-                            Some((target, info.clone()));
+                        *module_info = Some((target, info.clone()));
                     } else if let Ok(resolved_path) = project
                         .paths
                         .resolve_import(project.root(), Path::new(&target_path))
@@ -367,12 +368,7 @@ fn render_immutables(modules: Vec<RouterTemplateInputs>) -> String {
 fn render_struct(modules: Vec<RouterTemplateInputs>) -> String {
     modules
         .iter()
-        .map(|m| {
-            format!(
-                "        address {};",
-                to_lower_camel_case(&m.contract_name)
-            )
-        })
+        .map(|m| format!("        address {};", to_lower_camel_case(&m.contract_name)))
         .unique()
         .collect::<Vec<String>>()
         .join("\n")
