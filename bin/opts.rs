@@ -10,22 +10,21 @@ const VERSION_MESSAGE: &str = concat!(
     ")"
 );
 
-/// Build, test, fuzz, debug and deploy Solidity contracts.
+/// Interact with Cannon files
 #[derive(Parser)]
 #[command(
-    name = "cannon",
+    name = "cannon-rs",
     version = VERSION_MESSAGE,
-    after_help = "Find more information in the book: http://book.getfoundry.sh/reference/forge/forge.html",
     next_display_order = None,
 )]
 pub struct Cannon {
     #[command(subcommand)]
-    pub cmd: CannonSubcommand,
+    pub cmd: CannonSubCommand,
 }
 
 #[derive(Subcommand)]
 #[allow(clippy::large_enum_variant)]
-pub enum CannonSubcommand {
+pub enum CannonSubCommand {
     /// Generate scaffold files.
     Generate(generate::GenerateArgs),
 }

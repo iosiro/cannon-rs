@@ -6,7 +6,7 @@ mod cmd;
 use cmd::generate::GenerateSubcommands;
 
 mod opts;
-use opts::{Cannon, CannonSubcommand};
+use opts::{Cannon, CannonSubCommand};
 
 fn main() -> Result<()> {
     handler::install();
@@ -17,7 +17,7 @@ fn main() -> Result<()> {
     let opts = Cannon::parse();
 
     match opts.cmd {
-        CannonSubcommand::Generate(cmd) => match cmd.sub {
+        CannonSubCommand::Generate(cmd) => match cmd.sub {
             GenerateSubcommands::Router(cmd) => cmd.run(),
             GenerateSubcommands::DynamicRouter(cmd) => cmd.run(),
         },
