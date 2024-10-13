@@ -1406,6 +1406,7 @@ dependencies = [
  "foundry-config",
  "itertools 0.13.0",
  "serde",
+ "toml",
  "vergen",
  "yansi",
 ]

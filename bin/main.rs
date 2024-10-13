@@ -19,7 +19,7 @@ fn main() -> Result<()> {
     match opts.cmd {
         CannonSubCommand::Generate(cmd) => match cmd.sub {
             GenerateSubcommands::Router(cmd) => cmd.run(),
-            GenerateSubcommands::DynamicRouter(cmd) => cmd.run(),
+            GenerateSubcommands::ImmutableRouter(cmd) => cmd.run(),
         },
     }
 }
